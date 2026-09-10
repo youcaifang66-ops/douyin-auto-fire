@@ -339,13 +339,13 @@ async def test_sticker_click_raises_when_not_staged(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_missing_sticker_mapping_fails() -> None:
     with pytest.raises(Exception, match="没有原生表情映射"):
-        await send_message(AsyncMock(), AsyncMock(), Message(type="douyin_sticker", sticker="比心"), {})
+        await send_message(MagicMock(), AsyncMock(), Message(type="douyin_sticker", sticker="比心"), {})
 
 
 @pytest.mark.asyncio
 async def test_image_message_requires_path() -> None:
     with pytest.raises(Exception, match="缺少文件路径"):
-        await send_message(AsyncMock(), AsyncMock(), Message(type="image", path=None), {})
+        await send_message(MagicMock(), AsyncMock(), Message(type="image", path=None), {})
 
 
 @pytest.mark.asyncio

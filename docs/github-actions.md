@@ -779,4 +779,22 @@ Fork 项目
 
 ## 返回项目主页
 
+### 发送接口返回 KICK
+
+即使私信页面和好友列表能打开，发送接口也可能以 HTTP 200 返回
+`{"decision":"KICK"}`，而不是正常发送结果。程序会停止后续发送并提示更新凭据，
+不会把它当成普通页面错误继续处理好友。这个响应本身不能区分会话失效或安全策略拒绝。
+
+重新登录抖音网页版，完成可能出现的安全验证，重新导出 Cookie，更新仓库
+Settings → Secrets and variables → Actions 中的 `DOUYIN_COOKIE`
+（多账号更新对应的 `DOUYIN_COOKIE_ACCOUNTn`）。不要把 Cookie 粘贴到 Issue 或日志。
+Dry Run 只检查页面和好友，无法证明发送接口接受会话；真实发送需要另外验证。
+
+### 定时启动晚于设置时间
+
+当前 `16 22 * * *` 对应北京时间次日 06:16。GitHub Actions 的 schedule
+可能延迟，不能保证准点；详见 [GitHub 调度说明](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows)。
+必须准点时应使用服务器定时器，参见 [服务器部署](server.md)。
+不要直接增加多个发送时段：各次 Actions 的本地历史文件不会自动共享，可能造成重复发送。
+
 👉 [返回 douyin-auto-fire](../README.md)

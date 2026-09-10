@@ -6,6 +6,7 @@ import secrets
 from urllib.parse import urlsplit
 
 from playwright.async_api import Locator, Page
+from app.browser import AuthenticationError
 
 from app.douyin import DouyinChat, PageOperationError, first_visible
 from app.models import Message, Sticker
@@ -109,9 +110,48 @@ SEND_STABLE_INTERVAL_MS = 500
 SEND_INITIAL_CLEAN_GRACE_MS = 2_000
 
 
+class SendRejectedError(PageOperationError):
+    """The outgoing bubble explicitly reports failure, not a staged sticker."""
+
+
 async def send_message(page: Page, chat: DouyinChat, message: Message, stickers: dict[str, Sticker]) -> None:
+    # HTTP 200 can contain a rejection instead of a successful IM response.
+    # Keep response data private; only the known decision is interpreted.
+    pending = []
+    rejected = False
+
+    async def inspect(response):
+        nonlocal rejected
+        try:
+            payload = await asyncio.wait_for(response.json(), timeout=5)
+            if isinstance(payload, dict) and payload.get("decision") == "KICK":
+                rejected = True
+        except Exception:
+            pass  # Normal IM responses may be binary, not JSON.
+
+    def on_response(response):
+        url = urlsplit(response.url)
+        if url.hostname == "imapi.douyin.com" and url.path == "/v1/message/send":
+            pending.append(asyncio.create_task(inspect(response)))
+
+    page.on("response", on_response)
+    try:
+        await _send_message(page, chat, message, stickers)
+    finally:
+        page.remove_listener("response", on_response)
+        if pending:
+            await asyncio.gather(*pending)
+        if rejected:
+            raise AuthenticationError(
+                "抖音发送接口返回 KICK，当前会话被服务端拒绝；已停止后续发送。"
+                "请重新登录抖音、完成可能的安全验证，并更新 GitHub Secret DOUYIN_COOKIE"
+                "（多账号则更新对应的 DOUYIN_COOKIE_ACCOUNTn）后再运行。"
+            )
+
+
+async def _send_message(page: Page, chat: DouyinChat, message: Message, stickers: dict[str, Sticker]) -> None:
     if message.type == "random":
-        await send_message(page, chat, random.choice(message.choices), stickers)
+        await _send_message(page, chat, random.choice(message.choices), stickers)
         return
     if message.type == "text":
         await send_text(chat, message.content or "")
@@ -272,6 +312,8 @@ async def _click_and_confirm_sticker(page: Page, item, before: tuple[str, str], 
     await item.click(force=True)
     try:
         await _confirm_sticker_sent(page, before, name, resource_key)
+    except SendRejectedError:
+        raise
     except PageOperationError:
         if await _publish_ready(page):
             await _trigger_send(page)
@@ -365,7 +407,7 @@ async def _await_send_terminal_state(
                 f"{label}发送状态未能确认（发送超时或状态不确定），为避免重复不会自动重试"
             )
         if await _marker_visible(scope, SEND_FAILURE_MARKERS):
-            raise PageOperationError(f"{label}发送失败，页面提示可以重试")
+            raise SendRejectedError(f"{label}发送失败，页面提示可以重试")
         if await _marker_visible(scope, SEND_PENDING_MARKERS):
             break  # -> resolve pending in Phase 2
         await page.wait_for_timeout(SEND_POLL_INTERVAL_MS)
@@ -381,13 +423,13 @@ async def _await_send_terminal_state(
                 f"{label}发送状态未能确认（发送超时或状态不确定），为避免重复不会自动重试"
             )
         if await _marker_visible(scope, SEND_FAILURE_MARKERS):
-            raise PageOperationError(f"{label}发送失败，页面提示可以重试")
+            raise SendRejectedError(f"{label}发送失败，页面提示可以重试")
         if not await _marker_visible(scope, SEND_PENDING_MARKERS):
             # Spinner gone. Require it to STAY clear across the stable window --
             # the retry marker can mount a tick after the spinner disappears.
             await page.wait_for_timeout(SEND_STABLE_INTERVAL_MS)
             if await _marker_visible(scope, SEND_FAILURE_MARKERS):
-                raise PageOperationError(f"{label}发送失败，页面提示可以重试")
+                raise SendRejectedError(f"{label}发送失败，页面提示可以重试")
             if not await _marker_visible(scope, SEND_PENDING_MARKERS):
                 return  # terminal: success
             # spinner reappeared -> keep waiting
