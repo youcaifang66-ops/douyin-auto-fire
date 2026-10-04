@@ -25,6 +25,7 @@ jobs:
     env:
       DOUYIN_COOKIE: ${{ secrets.DOUYIN_COOKIE }}
       DOUYIN_STORAGE_STATE: ${{ secrets.DOUYIN_STORAGE_STATE }}
+      DOUYIN_STORAGE_STATE_GZIP: ${{ secrets.DOUYIN_STORAGE_STATE_GZIP }}
       DOUYIN_CONFIG: ${{ secrets.DOUYIN_CONFIG }}
       DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
       DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
@@ -109,6 +110,25 @@ jobs:
               json.dumps({"accounts": accounts}, ensure_ascii=False, indent=2),
               encoding="utf-8",
           )
+          PY
+      - name: Restore compressed login state
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64
+          import gzip
+          import json
+          import os
+          from pathlib import Path
+
+          encoded = os.environ.get("DOUYIN_STORAGE_STATE_GZIP")
+          if encoded and not os.environ.get("DOUYIN_STORAGE_STATE") and not Path("config/accounts.json").exists():
+              state = gzip.decompress(base64.b64decode(encoded, validate=True))
+              parsed = json.loads(state)
+              if not isinstance(parsed, dict) or not isinstance(parsed.get("cookies"), list):
+                  raise SystemExit("Invalid compressed login state")
+              Path("storage-state.json").write_bytes(state)
+              Path("storage-state.json").chmod(0o600)
           PY
       - name: Run
         shell: bash
