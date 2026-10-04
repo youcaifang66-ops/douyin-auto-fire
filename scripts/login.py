@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import gzip
 import sys
 from pathlib import Path
 
@@ -10,6 +12,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from playwright.async_api import async_playwright
+
+from app.browser import open_private_messages
 
 
 DOUYIN_URL = "https://www.douyin.com/"
@@ -25,10 +29,19 @@ async def login() -> None:
         await asyncio.to_thread(input)
         await page.goto(DOUYIN_URL, wait_until="domcontentloaded")
         await _verify_home_login(page)
+        # A homepage session can exist while IM still requires authentication.
+        # Never replace the saved credentials until private messages work.
+        await open_private_messages(page)
         await context.storage_state(path="storage-state.json.tmp")
         await browser.close()
         Path("storage-state.json.tmp").replace("storage-state.json")
-        print("登录状态已保存到 storage-state.json")
+        export_dir = Path("storage_state")
+        export_dir.mkdir(exist_ok=True)
+        compressed = base64.b64encode(gzip.compress(Path("storage-state.json").read_bytes()))
+        (export_dir / "actions.gz.b64").write_bytes(compressed)
+        print("已验证私信页面，登录状态已保存到 storage-state.json")
+        print("GitHub Actions：将文件完整内容保存为仓库 Secret DOUYIN_STORAGE_STATE。不要提交文件到仓库。")
+        print("完整 JSON 超过 Secret 限制时，将 storage_state/actions.gz.b64 保存为 DOUYIN_STORAGE_STATE_GZIP。")
 
 
 async def _open_login(page) -> None:
